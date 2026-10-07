@@ -44,16 +44,6 @@ SAMPLES_DIR = UPLOAD_DIR / "samples"
 SAMPLES_DIR.mkdir(exist_ok=True)
 
 
-@app.on_event("startup")
-def startup_event():
-    """Auto-load benchmark documents so the workspace is immediately live on boot."""
-    try:
-        load_demo_documents()
-        print("PaperLens: Benchmark documents auto-indexed on startup.")
-    except Exception as e:
-        print(f"PaperLens startup note: {e}")
-
-
 @app.get("/")
 def root():
     return {

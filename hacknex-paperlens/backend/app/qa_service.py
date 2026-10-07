@@ -96,10 +96,108 @@ def retrieve_relevant_pages(question: str, pages: List[Dict[str, Any]], top_k: i
     return [p for _, p in scored_pages[:top_k]]
 
 
+def evaluate_evidence_relevance(question: str, candidate_pages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Evidence Relevance & Abstention Gate:
+    Determines whether candidate pages actually contain relevant evidence to answer the question.
+    Prevents arbitrary nearest chunks from being treated as valid evidence for irrelevant or ungrounded queries.
+    """
+    if not candidate_pages:
+        return {"is_supported": False, "score": 0.0, "reason": "No candidate pages available"}
+
+    q_clean = question.strip()
+    q_lower = q_clean.lower()
+
+    # Extract alphanumeric tokens
+    raw_tokens = re.findall(r'\b[a-zA-Z0-9_-]+\b', q_lower)
+    if not raw_tokens:
+        return {"is_supported": False, "score": 0.0, "reason": "No alphanumeric tokens in question"}
+
+    STOPWORDS = {
+        "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
+        "does", "do", "did", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "can", "could", "would", "should", "will", "shall",
+        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "with",
+        "about", "against", "between", "into", "through", "during", "before", "after",
+        "above", "below", "from", "up", "down", "out", "off", "over", "under",
+        "again", "further", "then", "once", "here", "there", "all", "any", "both",
+        "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not",
+        "only", "own", "same", "so", "than", "too", "very", "just", "now",
+        "tell", "show", "give", "explain", "find", "please", "me", "this", "that", "these", "those"
+    }
+
+    content_tokens = [w for w in raw_tokens if w not in STOPWORDS and len(w) >= 2]
+    if not content_tokens:
+        return {"is_supported": False, "score": 0.0, "reason": "Question contains only stopwords"}
+
+    # Aggregate candidate page text + table text
+    corpus_parts = []
+    for p in candidate_pages:
+        corpus_parts.append(p.get("text", ""))
+        for t in p.get("tables", []):
+            corpus_parts.extend(t.get("headers", []))
+            corpus_parts.append(t.get("markdown", ""))
+    corpus_text = " ".join(corpus_parts).lower()
+
+    if not corpus_text.strip():
+        return {"is_supported": False, "score": 0.0, "reason": "Candidate pages contain no text"}
+
+    matched_tokens = [t for t in content_tokens if t in corpus_text]
+
+    # Modality intents
+    is_visual_query = any(w in q_lower for w in ["chart", "graph", "plot", "figure", "visual", "diagram", "trend", "efficiency"])
+    has_visuals = any(p.get("has_charts") or p.get("has_images") for p in candidate_pages)
+
+    is_table_query = any(w in q_lower for w in ["table", "column", "row", "tabular", "cell", "revenue"])
+    has_tables = any(p.get("has_tables") for p in candidate_pages)
+
+    # Known external off-topic entities
+    external_entities = [
+        "tokyo", "japan", "paris", "france", "london", "england", "world cup", "football",
+        "soccer", "basketball", "nba", "nfl", "super bowl", "messi", "ronaldo",
+        "recipe", "chocolate", "pizza", "burger", "cook", "bake", "weather", "temperature",
+        "president", "prime minister", "celebrity", "hollywood", "movie", "song", "album",
+        "crypto", "bitcoin", "ethereum", "astronomy", "mars", "jupiter", "moon", "olympics"
+    ]
+    for entity in external_entities:
+        if entity in q_lower and entity not in corpus_text:
+            return {
+                "is_supported": False,
+                "score": 0.0,
+                "reason": f"External topic '{entity}' not present in documents"
+            }
+
+    # Zero content tokens matched in corpus (e.g. "abcdefg")
+    if len(matched_tokens) == 0:
+        return {
+            "is_supported": False,
+            "score": 0.0,
+            "reason": "Zero content tokens matched in document corpus"
+        }
+
+    # Multiple content tokens but extremely low match (< 25%) and no visual/table intent
+    match_ratio = len(matched_tokens) / len(content_tokens)
+    if len(content_tokens) >= 3 and match_ratio < 0.25:
+        if not (is_visual_query and has_visuals) and not (is_table_query and has_tables):
+            return {
+                "is_supported": False,
+                "score": match_ratio,
+                "reason": f"Low evidence coverage: only {len(matched_tokens)}/{len(content_tokens)} terms matched"
+            }
+
+    return {
+        "is_supported": True,
+        "score": match_ratio,
+        "matched_tokens": matched_tokens,
+        "reason": f"Matched {len(matched_tokens)} terms ({match_ratio:.2f} ratio)"
+    }
+
+
 def answer_multimodal_question(question: str, document_ids: Optional[List[str]] = None) -> AnswerResponse:
     """
     Core Multimodal QA Reasoner:
     - Retrieves candidate pages across registered documents
+    - Applies strict Evidence Relevance & Abstention Gate
     - Bundles extracted text, structured tables, and rendered page images
     - Calls Gemini with strict 'NO UNSOURCED ANSWERS' instructions
     - Verifies calculations programmatically
@@ -120,6 +218,27 @@ def answer_multimodal_question(question: str, document_ids: Optional[List[str]] 
 
     # Retrieve candidate pages
     candidate_pages = retrieve_relevant_pages(question, all_pages, top_k=4)
+
+    # CRITICAL GATE: Evidence Relevance & Abstention Check
+    relevance_gate = evaluate_evidence_relevance(question, candidate_pages)
+    if not relevance_gate["is_supported"]:
+        return AnswerResponse(
+            question=question,
+            answer="I couldn't find enough relevant evidence in the selected document to answer this question. Try asking something related to the document's text, tables, charts, or figures.",
+            why="We searched the document for evidence supporting this question, but found no relevant mentions or data.",
+            confidence="Low",
+            evidence_coverage="Insufficient",
+            modalities=[],
+            evidence=[],
+            calculation=None,
+            reasoning_steps=[
+                "Step 1 — Evaluated question against document index: Found no relevant evidence",
+                "Step 2 — Checked text, tables, and figures: Relevance score below threshold",
+                "Step 3 — Arithmetic verification: None required",
+                "Step 4 — Abstained from answering: Prevented unsourced response"
+            ],
+            outside_context=None
+        )
 
     client = get_genai_client()
     if not client:
@@ -247,7 +366,7 @@ Return ONLY a valid JSON object with EXACTLY this structure (no markdown fences,
 
     import time
 
-    CANDIDATE_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash"]
+    CANDIDATE_MODELS = ["gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash"]
 
     def _call_gemini_with_retry(contents):
         last_e = None
@@ -339,36 +458,25 @@ def _fallback_grounded_qa(question: str, candidate_pages: List[Dict[str, Any]]) 
     doc_name = top_page["document_name"] if top_page else "Document"
     p_num = top_page["page_number"] if top_page else 1
 
-    # 1. Edge Case: Irrelevant / Out-of-Scope Question
-    specific_entities = [
-        "tokyo", "japan", "paris", "france", "capital", "weather", "president", "football",
-        "movie", "recipe", "celebrity", "pizza", "food", "cook", "bake", "burger",
-        "restaurant", "song", "actor", "astronomy", "mars", "moon"
-    ]
-    all_doc_text = " ".join([p["text"].lower() for p in candidate_pages])
-    is_missing_entity = any(k in q_lower and k not in all_doc_text for k in specific_entities)
-
-    q_words = [w for w in re.findall(r"\b[a-zA-Z]{4,}\b", q_lower) if w not in ["what", "when", "where", "which", "how", "does", "from", "show", "tell", "give", "explain", "about", "this", "that"]]
-    overlap = [w for w in q_words if w in all_doc_text]
-    is_zero_overlap = len(q_words) >= 2 and len(overlap) == 0
-
-    if is_missing_entity or is_zero_overlap:
-        subject = doc_name.replace(".pdf", "").replace("_", " ")
+    # 1. Edge Case: Evidence Relevance & Abstention Gate
+    relevance_gate = evaluate_evidence_relevance(question, candidate_pages)
+    if not relevance_gate["is_supported"]:
         return AnswerResponse(
             question=question,
-            answer=f"This document does not contain enough information to answer that. The uploaded files focus on {subject} rather than general trivia.",
-            why=f"We scanned {len(candidate_pages)} candidate pages across your documents and found zero mentions of the requested topic.",
-            outside_context="[Outside the document: If you need general world knowledge, please consult a general-purpose knowledge base.]",
+            answer="I couldn't find enough relevant evidence in the selected document to answer this question. Try asking something related to the document's text, tables, charts, or figures.",
+            why="We searched the document for evidence supporting this question, but found no relevant mentions or data.",
             confidence="Low",
             evidence_coverage="Insufficient",
-            modalities=["text"],
+            modalities=[],
             evidence=[],
+            calculation=None,
             reasoning_steps=[
-                "Step 1 — Scanned candidate pages: Found no textual or tabular matches",
-                "Step 2 — Checked document subject: Topic is outside uploaded files",
+                "Step 1 — Evaluated question against document index: Found no relevant evidence",
+                "Step 2 — Checked text, tables, and figures: Relevance score below threshold",
                 "Step 3 — Arithmetic verification: None required",
-                "Step 4 — Concluded question is outside document scope"
-            ]
+                "Step 4 — Abstained from answering: Prevented unsourced response"
+            ],
+            outside_context=None
         )
 
     # 2. Edge Case: False Premise / Wrong Assumption

@@ -155,26 +155,32 @@ function App() {
     }
   };
 
-  const handleRunCompare = async () => {
-    console.log("handleRunCompare called! documents count:", documents.length);
-    if (documents.length < 2) {
+  const handleRunCompare = async (targetDocIds?: string[]) => {
+    const idsToCompare =
+      targetDocIds && targetDocIds.length >= 2
+        ? targetDocIds
+        : documents.slice(0, 4).map((d) => d.document_id);
+
+    if (idsToCompare.length < 2) {
       alert("At least 2 documents are required for comparison.");
+      return;
+    }
+    if (idsToCompare.length > 4) {
+      alert("You can select up to 4 documents for comparison.");
       return;
     }
 
     setLoading(true);
     try {
-      console.log("Sending POST to /api/compare with ids:", documents.map((d) => d.document_id));
       const res = await fetch(`${API_URL}/api/compare`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          document_ids: documents.map((d) => d.document_id),
+          document_ids: idsToCompare,
         }),
       });
 
       const data = await res.json();
-      console.log("Received /api/compare response status:", res.status, "data:", data);
       if (!res.ok) {
         throw new Error(data.detail || "Comparison failed");
       }

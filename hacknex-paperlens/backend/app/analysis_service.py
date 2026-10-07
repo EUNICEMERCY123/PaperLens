@@ -100,7 +100,7 @@ RESEARCH PAPER:
     import time
     last_err = None
     response = None
-    for m_name in ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.8-flash"]:
+    for m_name in ["gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.8-flash"]:
         for attempt in range(2):
             try:
                 response = client.models.generate_content(

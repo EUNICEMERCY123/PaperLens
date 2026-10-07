@@ -12,6 +12,7 @@ import {
   DownloadIcon,
   ShieldCheckIcon,
   CompareIcon,
+  InfoIcon,
 } from "./Icons";
 
 interface AskViewProps {
@@ -130,6 +131,15 @@ export const AskView: React.FC<AskViewProps> = ({
     }
   };
 
+  // Determine if this query was abstained or unsupported
+  const isUnsupported =
+    answerData &&
+    (answerData.confidence === "Low" || answerData.evidence_coverage === "Insufficient") &&
+    (answerData.evidence.length === 0 ||
+      answerData.answer.toLowerCase().includes("couldn't find enough relevant evidence") ||
+      answerData.answer.toLowerCase().includes("not contain enough information") ||
+      answerData.answer.toLowerCase().includes("no documents"));
+
   return (
     <div className="workspace-container">
       {/* Search & Scope Header */}
@@ -228,152 +238,227 @@ export const AskView: React.FC<AskViewProps> = ({
 
       {/* Answer Experience */}
       {answerData && !loading && (
-        <div className="answer-card-container">
-          {/* Answer Header Bar */}
-          <div className="answer-top-rail">
-            <div className="answer-query-meta">
-              <span className="answer-query-label">Question:</span>
-              <span className="answer-query-title">"{answerData.question}"</span>
-            </div>
-            <div className="answer-actions-meta">
-              <span className="confidence-pill">
-                <ShieldCheckIcon size={13} />
-                <span>{answerData.confidence} confidence</span>
-              </span>
-              <button
-                type="button"
-                className="btn-text-action"
-                onClick={handleExportMarkdown}
-                title="Download this answer and proof as Markdown"
-              >
-                <DownloadIcon size={14} />
-                <span>{copied ? "Downloaded" : "Export"}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Section 1: The Direct Answer */}
-          <div className="answer-main-section">
-            <h3 className="section-subheading">Answer</h3>
-            <p className="direct-answer-text">{answerData.answer}</p>
-          </div>
-
-          {/* Section 2: Why? */}
-          {answerData.why && (
-            <div className="answer-why-section">
-              <h3 className="section-subheading">Why?</h3>
-              <p className="why-text">{answerData.why}</p>
-            </div>
-          )}
-
-          {/* Edge case: Outside the document */}
-          {answerData.outside_context && (
-            <div className="callout-card callout-neutral">
-              <span className="callout-tag">Outside the document</span>
-              <p className="callout-text">{answerData.outside_context}</p>
-            </div>
-          )}
-
-          {/* Section 3: Checked Calculation (when numbers are involved) */}
-          {answerData.calculation && (
-            <div className="answer-calc-section">
-              <div className="calc-header-row">
-                <h3 className="section-subheading">Checked calculation</h3>
-                <span className="calc-verified-badge">
-                  <CheckIcon size={12} />
-                  <span>Verified with arithmetic engine</span>
+        <>
+          {isUnsupported ? (
+            /* Dedicated Abstention Card for Unsupported / Irrelevant Questions */
+            <div className="unsupported-answer-card">
+              <div className="unsupported-header-row">
+                <div className="unsupported-title-group">
+                  <InfoIcon size={18} className="unsupported-icon" />
+                  <h3 className="unsupported-heading">Insufficient Document Evidence</h3>
+                </div>
+                <span className="confidence-pill confidence-pill-low">
+                  <ShieldCheckIcon size={13} />
+                  <span>Low confidence (Abstained)</span>
                 </span>
               </div>
-              <div className="calc-box">
-                <div className="calc-formula-row">
-                  <span className="calc-label">Formula:</span>
-                  <code className="calc-code">{answerData.calculation.expression}</code>
+
+              <div className="unsupported-query-badge">
+                <span className="query-meta-label">Query:</span>
+                <span className="query-meta-val">"{answerData.question}"</span>
+              </div>
+
+              <p className="unsupported-message-text">{answerData.answer}</p>
+
+              {answerData.why && (
+                <div className="unsupported-reason-callout">
+                  <span className="callout-tag">Audit Note</span>
+                  <p className="callout-text">{answerData.why}</p>
                 </div>
-                <div className="calc-result-row">
-                  <span className="calc-label">Result:</span>
-                  <strong className="calc-result-val">{answerData.calculation.result}</strong>
+              )}
+
+              <div className="unsupported-guidance-box">
+                <span className="guidance-label">Suggested actions:</span>
+                <ul className="guidance-list">
+                  <li>Ask about specific topics, metrics, or tables present in your uploaded document.</li>
+                  <li>Verify that names, dates, or quarters match the document's content.</li>
+                  <li>If the information might be in another document, ensure all relevant files are uploaded.</li>
+                </ul>
+              </div>
+
+              {answerData.reasoning_steps && answerData.reasoning_steps.length > 0 && (
+                <div className="how-it-was-built-section">
+                  <h3 className="section-subheading">Evidence Relevance Audit</h3>
+                  <div className="build-steps-list">
+                    {answerData.reasoning_steps.map((step, idx) => (
+                      <div key={idx} className="build-step-item">
+                        <span className="step-circle">{idx + 1}</span>
+                        <span className="step-desc">{step}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                {answerData.calculation.steps.length > 0 && (
-                  <div className="calc-steps-row">
-                    <span className="calc-label">Steps:</span>
-                    <ul className="calc-steps-list">
-                      {answerData.calculation.steps.map((st, i) => (
-                        <li key={i}>{st}</li>
+              )}
+            </div>
+          ) : (
+            /* Structured Research Card for Grounded Answers */
+            <div className="answer-card-container">
+              {/* Answer Header Bar */}
+              <div className="answer-top-rail">
+                <div className="answer-query-meta">
+                  <span className="answer-query-label">Question:</span>
+                  <span className="answer-query-title">"{answerData.question}"</span>
+                </div>
+                <div className="answer-actions-meta">
+                  <span className={`confidence-pill confidence-pill-${answerData.confidence.toLowerCase()}`}>
+                    <ShieldCheckIcon size={13} />
+                    <span>{answerData.confidence} confidence</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-text-action"
+                    onClick={handleExportMarkdown}
+                    title="Download this answer and proof as Markdown"
+                  >
+                    <DownloadIcon size={14} />
+                    <span>{copied ? "Downloaded" : "Export"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Section 1: The Direct Answer */}
+              <div className="answer-main-section">
+                <div className="answer-headline-row">
+                  <h3 className="section-subheading">Answer</h3>
+                  {answerData.evidence && answerData.evidence.length > 0 && (
+                    <span className="answer-source-chip">
+                      <DocumentIcon size={12} />
+                      <span>
+                        Grounded in {answerData.evidence[0].document_name} · Page {answerData.evidence[0].page}
+                      </span>
+                    </span>
+                  )}
+                </div>
+                <p className="direct-answer-text">{answerData.answer}</p>
+
+                {/* Key Findings Summary if multiple evidence items */}
+                {answerData.evidence && answerData.evidence.length > 1 && (
+                  <div className="key-evidence-summary">
+                    <span className="key-evidence-title">Key findings from sources:</span>
+                    <ul className="key-evidence-list">
+                      {answerData.evidence.slice(0, 3).map((ev, i) => (
+                        <li key={i} className="key-evidence-bullet">
+                          <strong>Page {ev.page} ({ev.type}):</strong> {ev.description}
+                        </li>
                       ))}
                     </ul>
                   </div>
                 )}
               </div>
-            </div>
-          )}
 
-          {/* Section 4: How this answer was built (Novelty made simple) */}
-          {answerData.reasoning_steps && answerData.reasoning_steps.length > 0 && (
-            <div className="how-it-was-built-section">
-              <h3 className="section-subheading">How this answer was built</h3>
-              <div className="build-steps-list">
-                {answerData.reasoning_steps.map((step, idx) => (
-                  <div key={idx} className="build-step-item">
-                    <span className="step-circle">{idx + 1}</span>
-                    <span className="step-desc">{step}</span>
+              {/* Section 2: Why? */}
+              {answerData.why && (
+                <div className="answer-why-section">
+                  <h3 className="section-subheading">Why?</h3>
+                  <p className="why-text">{answerData.why}</p>
+                </div>
+              )}
+
+              {/* Edge case: Outside the document */}
+              {answerData.outside_context && (
+                <div className="callout-card callout-neutral">
+                  <span className="callout-tag">Outside the document</span>
+                  <p className="callout-text">{answerData.outside_context}</p>
+                </div>
+              )}
+
+              {/* Section 3: Checked Calculation (when numbers are involved) */}
+              {answerData.calculation && (
+                <div className="answer-calc-section">
+                  <div className="calc-header-row">
+                    <h3 className="section-subheading">Checked calculation</h3>
+                    <span className="calc-verified-badge">
+                      <CheckIcon size={12} />
+                      <span>Verified with arithmetic engine</span>
+                    </span>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Section 5: Proof & Citations */}
-          <div className="answer-proof-section">
-            <div className="proof-header-row">
-              <h3 className="section-subheading">Proof</h3>
-              <span className="proof-count-label">
-                {answerData.evidence.length} source{answerData.evidence.length === 1 ? "" : "s"}
-              </span>
-            </div>
-
-            {answerData.evidence.length === 0 ? (
-              <div className="callout-card callout-neutral">
-                <p className="callout-text">
-                  We couldn't find specific supporting citations in the uploaded documents for this query.
-                </p>
-              </div>
-            ) : (
-              <div className="evidence-cards-stack">
-                {answerData.evidence.map((ev, idx) => (
-                  <div key={idx} className="evidence-card">
-                    <div className="evidence-card-header">
-                      <div className="evidence-doc-pill">
-                        <span className="evidence-modality-badge">
-                          {getModalityIcon(ev.type)}
-                          <span>{ev.type === "scanned_text" ? "Scanned" : ev.type}</span>
-                        </span>
-                        <span className="evidence-doc-name">{ev.document_name}</span>
-                        <span className="evidence-page-num">Page {ev.page}</span>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn-view-proof"
-                        onClick={() => onInspectEvidence(ev)}
-                      >
-                        <ExternalLinkIcon size={13} />
-                        <span>View page</span>
-                      </button>
+                  <div className="calc-box">
+                    <div className="calc-formula-row">
+                      <span className="calc-label">Formula:</span>
+                      <code className="calc-code">{answerData.calculation.expression}</code>
                     </div>
-
-                    <p className="evidence-description">{ev.description}</p>
-
-                    {ev.excerpt && (
-                      <div className="evidence-excerpt-box">
-                        <blockquote className="excerpt-quote">"{ev.excerpt}"</blockquote>
+                    <div className="calc-result-row">
+                      <span className="calc-label">Result:</span>
+                      <strong className="calc-result-val">{answerData.calculation.result}</strong>
+                    </div>
+                    {answerData.calculation.steps && answerData.calculation.steps.length > 0 && (
+                      <div className="calc-steps-row">
+                        <span className="calc-label">Steps:</span>
+                        <ul className="calc-steps-list">
+                          {answerData.calculation.steps.map((st, i) => (
+                            <li key={i}>{st}</li>
+                          ))}
+                        </ul>
                       </div>
                     )}
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+                </div>
+              )}
+
+              {/* Section 4: How this answer was built */}
+              {answerData.reasoning_steps && answerData.reasoning_steps.length > 0 && (
+                <div className="how-it-was-built-section">
+                  <h3 className="section-subheading">How this answer was built</h3>
+                  <div className="build-steps-list">
+                    {answerData.reasoning_steps.map((step, idx) => (
+                      <div key={idx} className="build-step-item">
+                        <span className="step-circle">{idx + 1}</span>
+                        <span className="step-desc">{step}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Section 5: Proof & Citations */}
+              {answerData.evidence && answerData.evidence.length > 0 && (
+                <div className="answer-proof-section">
+                  <div className="proof-header-row">
+                    <h3 className="section-subheading">Proof & Citations</h3>
+                    <span className="proof-count-label">
+                      {answerData.evidence.length} source{answerData.evidence.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+
+                  <div className="evidence-cards-stack">
+                    {answerData.evidence.map((ev, idx) => (
+                      <div key={idx} className="evidence-card">
+                        <div className="evidence-card-header">
+                          <div className="evidence-doc-pill">
+                            <span className="evidence-modality-badge">
+                              {getModalityIcon(ev.type)}
+                              <span>{ev.type === "scanned_text" ? "Scanned" : ev.type}</span>
+                            </span>
+                            <span className="evidence-doc-name">{ev.document_name}</span>
+                            <span className="evidence-page-num">Page {ev.page}</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn-view-proof"
+                            onClick={() => onInspectEvidence(ev)}
+                          >
+                            <ExternalLinkIcon size={13} />
+                            <span>View page</span>
+                          </button>
+                        </div>
+
+                        <p className="evidence-description">{ev.description}</p>
+
+                        {ev.excerpt && (
+                          <div className="evidence-excerpt-box">
+                            <blockquote className="excerpt-quote">"{ev.excerpt}"</blockquote>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 };
+
