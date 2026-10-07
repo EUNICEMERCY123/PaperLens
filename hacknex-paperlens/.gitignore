@@ -25,3 +25,4 @@ uploads/
 # OS
 .DS_Store
 Thumbs.db
+frontend/.edge-temp/

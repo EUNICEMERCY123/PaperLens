@@ -6,23 +6,18 @@ import type {
   EvidenceItem,
   ComparisonRow,
 } from "./types";
-import { DocumentManager } from "./components/DocumentManager";
-import { AskBar } from "./components/AskBar";
-import { AnswerCard } from "./components/AnswerCard";
-import { EvidenceCards } from "./components/EvidenceCards";
-import { EvidenceViewerModal } from "./components/EvidenceViewerModal";
-import { EvidenceMap } from "./components/EvidenceMap";
-import { ReasoningSteps } from "./components/ReasoningSteps";
-import { CompareModal } from "./components/CompareModal";
-import { LegacyPaperView } from "./components/LegacyPaperView";
-import { AboutSection } from "./components/AboutSection";
+import { TopNav } from "./components/TopNav";
+import type { WorkspaceTab } from "./components/TopNav";
+import { DocumentsView } from "./components/DocumentsView";
+import { AskView } from "./components/AskView";
+import { CompareView } from "./components/CompareView";
+import { EvidenceView } from "./components/EvidenceView";
+import { DocumentViewerModal } from "./components/DocumentViewerModal";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
-type ActiveTab = "workspace" | "legacy" | "about";
-
 function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>("workspace");
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>("documents");
   const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
   const [loading, setLoading] = useState(false);
   const [managerMessage, setManagerMessage] = useState("");
@@ -30,10 +25,9 @@ function App() {
   const [selectedDocId, setSelectedDocId] = useState("");
   const [answerData, setAnswerData] = useState<AnswerResponse | null>(null);
   const [activeEvidence, setActiveEvidence] = useState<EvidenceItem | null>(null);
-  const [compareData, setCompareData] = useState<ComparisonRow[] | null>(null);
-  const [isCompareOpen, setIsCompareOpen] = useState(false);
+  const [comparison, setComparison] = useState<ComparisonRow[] | null>(null);
 
-  // Load existing registered documents on mount
+  // Fetch indexed documents on startup
   useEffect(() => {
     fetchDocuments();
   }, []);
@@ -46,13 +40,14 @@ function App() {
         setDocuments(data);
       }
     } catch {
-      // Backend might be booting
+      // Backend may be starting up
     }
   };
 
   const handleUploadFiles = async (files: FileList) => {
+    if (!files || files.length === 0) return;
     setLoading(true);
-    setManagerMessage("Processing document pages, tables, and visual regions...");
+    setManagerMessage("Reading document pages, tables, and figures...");
 
     const formData = new FormData();
     for (let i = 0; i < files.length; i++) {
@@ -86,11 +81,12 @@ function App() {
 
       setManagerMessage(
         files.length === 1
-          ? `Successfully processed ${data.document.filename} (${data.document.page_count} pages)`
-          : `Successfully processed ${data.documents.length} documents`
+          ? `Indexed ${data.filename || "document"} (${data.page_count || 1} pages)`
+          : `Successfully indexed ${Array.isArray(data) ? data.length : (data.documents?.length || files.length)} documents`
       );
 
       await fetchDocuments();
+      setActiveTab("documents");
     } catch (err) {
       setManagerMessage(
         err instanceof Error ? err.message : "Failed to upload document(s)."
@@ -100,7 +96,7 @@ function App() {
     }
   };
 
-  const handleLoadDemo = async () => {
+  const handleLoadExample = async () => {
     setLoading(true);
     setManagerMessage("Loading benchmark Annual Report & Q4 Report datasets...");
 
@@ -110,14 +106,16 @@ function App() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.detail || "Failed to load demo");
+        throw new Error(data.detail || "Failed to load benchmark");
       }
 
-      setDocuments(data.documents);
-      setManagerMessage("Benchmark documents loaded with charts, tables, and scanned memos!");
+      const docs = Array.isArray(data) ? data : (data.documents || []);
+      setDocuments(docs);
+      setManagerMessage("Benchmark documents ready.");
+      await fetchDocuments();
     } catch (err) {
       setManagerMessage(
-        err instanceof Error ? err.message : "Failed to load demo datasets."
+        err instanceof Error ? err.message : "Failed to load benchmark dataset."
       );
     } finally {
       setLoading(false);
@@ -149,12 +147,7 @@ function App() {
       }
 
       setAnswerData(data);
-
-      setTimeout(() => {
-        document.getElementById("answer-section")?.scrollIntoView({
-          behavior: "smooth",
-        });
-      }, 100);
+      setActiveTab("ask");
     } catch (err) {
       alert(err instanceof Error ? err.message : "Error asking question");
     } finally {
@@ -162,14 +155,16 @@ function App() {
     }
   };
 
-  const handleCompare = async () => {
+  const handleRunCompare = async () => {
+    console.log("handleRunCompare called! documents count:", documents.length);
     if (documents.length < 2) {
-      alert("At least 2 documents are required for cross-document comparison.");
+      alert("At least 2 documents are required for comparison.");
       return;
     }
 
     setLoading(true);
     try {
+      console.log("Sending POST to /api/compare with ids:", documents.map((d) => d.document_id));
       const res = await fetch(`${API_URL}/api/compare`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -179,148 +174,101 @@ function App() {
       });
 
       const data = await res.json();
+      console.log("Received /api/compare response status:", res.status, "data:", data);
       if (!res.ok) {
         throw new Error(data.detail || "Comparison failed");
       }
 
-      setCompareData(data);
-      setIsCompareOpen(true);
+      setComparison(data);
+      setActiveTab("compare");
     } catch (err) {
+      console.error("handleRunCompare error:", err);
       alert(err instanceof Error ? err.message : "Comparison failed");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleScrollToEvidence = () => {
-    document.getElementById("evidence-panel")?.scrollIntoView({
-      behavior: "smooth",
-    });
+  const handleAskDoc = (docId: string) => {
+    setSelectedDocId(docId);
+    setActiveTab("ask");
+  };
+
+  const triggerUploadClick = () => {
+    setActiveTab("documents");
+    // Small timeout to allow DocumentsView to render if not already active
+    setTimeout(() => {
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      if (fileInput) fileInput.click();
+    }, 50);
   };
 
   return (
-    <div className="app">
-      {/* Top Navigation */}
-      <header className="navbar">
-        <div className="brand-group" onClick={() => setActiveTab("workspace")}>
-          <span className="brand">PaperLens</span>
-          <span className="brand-slogan">Ask your documents. See the proof.</span>
-        </div>
+    <div className="paperlens-app">
+      {/* Notion-style Top Navigation */}
+      <TopNav
+        activeTab={activeTab}
+        onTabChange={(tab) => setActiveTab(tab)}
+        documents={documents}
+        onUploadClick={triggerUploadClick}
+        onLoadExample={handleLoadExample}
+        loading={loading}
+      />
 
-        <nav>
-          <button
-            type="button"
-            className={activeTab === "workspace" ? "nav-active" : ""}
-            onClick={() => setActiveTab("workspace")}
-          >
-            Multimodal Workspace
-          </button>
-          <button
-            type="button"
-            className={activeTab === "legacy" ? "nav-active" : ""}
-            onClick={() => setActiveTab("legacy")}
-          >
-            Paper Deep Analysis
-          </button>
-          <button
-            type="button"
-            className={activeTab === "about" ? "nav-active" : ""}
-            onClick={() => setActiveTab("about")}
-          >
-            About & Pipeline
-          </button>
-        </nav>
-      </header>
+      {/* Main Workspace Stage */}
+      <main className="workspace-main">
+        {activeTab === "documents" && (
+          <DocumentsView
+            documents={documents}
+            onUploadFiles={handleUploadFiles}
+            onLoadExample={handleLoadExample}
+            onSelectEvidence={(ev) => setActiveEvidence(ev)}
+            onAskDoc={handleAskDoc}
+            loading={loading}
+            message={managerMessage}
+          />
+        )}
 
-      {/* Main Content Area */}
-      <main className="main-content">
-        {activeTab === "legacy" && <LegacyPaperView apiUrl={API_URL} />}
+        {activeTab === "ask" && (
+          <AskView
+            question={question}
+            onQuestionChange={setQuestion}
+            onAsk={handleAsk}
+            selectedDocId={selectedDocId}
+            onSelectedDocIdChange={setSelectedDocId}
+            documents={documents}
+            loading={loading}
+            answerData={answerData}
+            onInspectEvidence={(ev) => setActiveEvidence(ev)}
+            onOpenCompare={() => {
+              setActiveTab("compare");
+              if (!comparison) handleRunCompare();
+            }}
+          />
+        )}
 
-        {activeTab === "about" && <AboutSection />}
+        {activeTab === "compare" && (
+          <CompareView
+            comparison={comparison}
+            documents={documents}
+            onRunCompare={handleRunCompare}
+            loading={loading}
+            onInspectEvidence={(ev) => setActiveEvidence(ev)}
+          />
+        )}
 
-        {activeTab === "workspace" && (
-          <div className="workspace-view">
-            {/* Hero Banner */}
-            <section className="workspace-hero">
-              <div className="hero-sticker-badge">HNX26PSI01 · MULTIMODAL INTELLIGENCE</div>
-              <h1 className="hero-heading">Ask your documents. See the proof.</h1>
-              <p className="hero-subtext">
-                Multimodal document intelligence that doesn't just answer your question —
-                it shows you the exact chart, table, or scanned page where the answer came from.
-              </p>
-              <div className="hero-principles">
-                <span className="principle-item">✦ Strictly Grounded</span>
-                <span className="principle-item">✦ Visual Chart Inspection</span>
-                <span className="principle-item">✦ Deterministic Math</span>
-                <span className="principle-item">✦ Scanned OCR Fallback</span>
-              </div>
-            </section>
-
-            {/* Step 1: Document Management */}
-            <DocumentManager
-              documents={documents}
-              onUploadFiles={handleUploadFiles}
-              onLoadDemo={handleLoadDemo}
-              onSelectEvidence={(ev) => setActiveEvidence(ev)}
-              loading={loading}
-              message={managerMessage}
-            />
-
-            {/* Step 2: Ask Interface & Prompt Suggestions */}
-            <AskBar
-              question={question}
-              onQuestionChange={setQuestion}
-              onAsk={handleAsk}
-              onCompare={handleCompare}
-              selectedDocId={selectedDocId}
-              onSelectedDocIdChange={setSelectedDocId}
-              documents={documents}
-              loading={loading}
-            />
-
-            {/* Loading Indicator */}
-            {loading && (
-              <div className="loading-indicator-card">
-                <div className="loading-spinner"></div>
-                <div className="loading-text">
-                  <h3>Multimodal Reasoning in Progress...</h3>
-                  <p>Inspecting rendered page graphics, structured tables, and arithmetic proofs.</p>
-                </div>
-              </div>
-            )}
-
-            {/* Step 3: Answer Display */}
-            {answerData && !loading && (
-              <div id="answer-section">
-                <AnswerCard
-                  answerData={answerData}
-                  onInspectEvidence={(ev) => setActiveEvidence(ev)}
-                  onScrollToEvidence={handleScrollToEvidence}
-                />
-
-                {/* Step 4: Page-Level Citations */}
-                <EvidenceCards
-                  evidenceList={answerData.evidence}
-                  onInspect={(ev) => setActiveEvidence(ev)}
-                />
-
-                {/* P2: Multimodal Evidence Map */}
-                <EvidenceMap
-                  answerData={answerData}
-                  onInspectEvidence={(ev) => setActiveEvidence(ev)}
-                />
-
-                {/* P2: Step-by-Step Observable Reasoning Audit */}
-                <ReasoningSteps steps={answerData.reasoning_steps} />
-              </div>
-            )}
-          </div>
+        {activeTab === "evidence" && (
+          <EvidenceView
+            answerData={answerData}
+            onInspectEvidence={(ev) => setActiveEvidence(ev)}
+            onGoToAsk={() => setActiveTab("ask")}
+          />
         )}
       </main>
 
-      {/* Modal: Interactive Page-Proof Viewer */}
+      {/* Document Proof Modal */}
       {activeEvidence && (
-        <EvidenceViewerModal
+        <DocumentViewerModal
           evidence={activeEvidence}
           onClose={() => setActiveEvidence(null)}
           apiUrl={API_URL}
@@ -330,25 +278,6 @@ function App() {
           }
         />
       )}
-
-      {/* Modal: Comparative Matrix Table */}
-      {isCompareOpen && compareData && (
-        <CompareModal
-          comparison={compareData}
-          documents={documents}
-          onClose={() => setIsCompareOpen(false)}
-        />
-      )}
-
-      {/* Footer */}
-      <footer className="footer">
-        <p>
-          <strong>PaperLens</strong> · Multimodal Document Intelligence Workspace · HackNex 2026
-        </p>
-        <p className="footer-sub">
-          Strictly Grounded · No Unsourced Answers · Deterministic Arithmetic Engine
-        </p>
-      </footer>
     </div>
   );
 }

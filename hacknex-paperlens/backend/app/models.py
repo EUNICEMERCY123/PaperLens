@@ -36,6 +36,8 @@ class AnswerResponse(BaseModel):
     calculation: Optional[CalculationItem] = None
     reasoning_steps: List[str] = Field(default_factory=list)
     comparison: Optional[List[ComparisonRow]] = None
+    why: Optional[str] = None
+    outside_context: Optional[str] = None
 
 
 class AskRequest(BaseModel):

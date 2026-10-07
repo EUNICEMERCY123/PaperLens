@@ -41,6 +41,8 @@ export interface AnswerResponse {
   calculation?: CalculationItem | null;
   reasoning_steps: string[];
   comparison?: ComparisonRow[] | null;
+  why?: string;
+  outside_context?: string;
 }
 
 export interface PageMetadata {
